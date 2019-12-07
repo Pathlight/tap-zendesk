@@ -292,18 +292,41 @@ class TicketMetrics(Stream):
         self.count += 1
         yield (self.stream, ticket_metric)
 
+class TicketEvents(Stream):
+    name = "ticket_events"
+    replication_method = "INCREMENTAL"
+    replication_key = 'timestamp'
+
+    def sync(self):
+        bookmark = self.get_bookmark(state)
+
+        comments_stream = TicketComments(self.client)
+        include = []
+        if comments_stream.is_selected():
+            include.append('ticket_comments')
+
+        ticket_events = self.client.tickets.events(bookmark, include=include)
+        for event in ticket_events:
+            # See the following URL for why we check the update timestamp:
+            # https://developer.zendesk.com/rest_api/docs/support/incremental_export#excluding-system-updates
+            if datetime.fromtimestamp(ticket_event.timestamp, pytz.utc) >= bookmark:
+                self.update_bookmark(state, event.updated_at)
+                yield (self.stream, event.to_dict())
+
+                if comments_stream.is_selected():
+                    comments_stream.sync(event)
+
 class TicketComments(Stream):
     name = "ticket_comments"
     replication_method = "INCREMENTAL"
     count = 0
 
-    def sync(self, ticket_id):
-        LOGGER.warning('Refusing to request ticket comments since it generates one request per ticket')
-        yield from ()
-        # ticket_comments = self.client.tickets.comments(ticket=ticket_id)
-        # for ticket_comment in ticket_comments:
-        #     self.count += 1
-        #     yield (self.stream, ticket_comment)
+    def sync(self, event):
+        for child_event in event.child_events:
+            if child_event.get('event_type') == 'Comment':
+                self.count += 1
+                child_event['ticket_id'] = event.ticket_id
+                yield (self.stream, child_event)
 
 class SatisfactionRatings(Stream):
     name = "satisfaction_ratings"
@@ -442,6 +465,7 @@ STREAMS = {
     "users": Users,
     "organizations": Organizations,
     "ticket_audits": TicketAudits,
+    "ticket_events": TicketEvents,
     "ticket_comments": TicketComments,
     "ticket_fields": TicketFields,
     "ticket_forms": TicketForms,
