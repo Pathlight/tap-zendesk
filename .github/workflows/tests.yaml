@@ -44,4 +44,4 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - uses: ./.github/workflows/base
-      - run: pytest
+      - run: make test
