@@ -15,28 +15,6 @@ concurrency:
   group: ci-tests-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # defaults for postgres docker container
-  POSTGRES_USER: postgres
-  # prefer using fuji db always? interferes with Makefile setup db
-  # POSTGRES_DB: postgres
-  POSTGRES_PASSWORD: postgres
-  PGPASSWORD: postgres
-  # default overrides for django settings
-  DATABASE_HOST: localhost
-  DATABASE_NAME: fuji
-  DATABASE_PASSWORD: postgres
-  DATABASE_PORT: 5432
-  DATABASE_USERNAME: postgres
-  # django settings override
-  REDIS_HOST: localhost
-  REDIS_PORT: 6379
-  PYTHONUNBUFFERED: 1
-  # Force due to bin/manage failing to find django,
-  # due to python site-packages incorrectly being set to .local,
-  # and not using venv
-  PYTHONPATH: "/home/runner/work/fuji/fuji/venv/lib/python3.8/site-packages"
-
 jobs:
   run-tests:
     runs-on: ubuntu-latest
