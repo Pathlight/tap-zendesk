@@ -2,6 +2,7 @@ import logging
 from statistics import mean
 from collections import defaultdict
 from datetime import datetime
+
 import singer
 
 # Defines the window (in seconds) over which we will collect raw metrics.
