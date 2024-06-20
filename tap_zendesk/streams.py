@@ -11,6 +11,13 @@ from singer import utils
 from singer.metrics import Point
 from tap_zendesk import metrics as zendesk_metrics
 
+DEFAULT_PAGE_SIZE = 100
+REQUEST_TIMEOUT = 300
+START_DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+HEADERS = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+}
 
 LOGGER = singer.get_logger()
 KEY_PROPERTIES = ['id']
@@ -58,14 +65,29 @@ class Stream():
     replication_key = None
     key_properties = KEY_PROPERTIES
     stream = None
+    endpoint = None
+    request_timeout = None
+    page_size = None
 
     def __init__(self, client=None, config=None):
         self.client = client
         self.config = config
-        if config:
-            self.start_date = utils.strptime_with_tz(config['start_date'])
+        # Set and pass request timeout to config param `request_timeout` value.
+        config_request_timeout = self.config.get('request_timeout')
+        if config_request_timeout and float(config_request_timeout):
+            self.request_timeout = float(config_request_timeout)
         else:
-            self.start_date = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+            self.request_timeout = REQUEST_TIMEOUT # If value is 0,"0","" or not passed then it set default to 300 seconds.
+
+        # To avoid infinite loop behavior we should not configure search window less than 2
+        if config.get('search_window_size') and int(config.get('search_window_size')) < 2:
+            raise ValueError('Search window size cannot be less than 2')
+
+        config_page_size = self.config.get('page_size')
+        if config_page_size and 1 <= int(config_page_size) <= 1000: # Zendesk's max page size
+            self.page_size = int(config_page_size)
+        else:
+            self.page_size = DEFAULT_PAGE_SIZE
 
     last_record_emit = {}
     buf = {}
@@ -115,7 +137,7 @@ class Stream():
 
     def load_schema(self):
         schema_file = "schemas/{}.json".format(self.name)
-        with open(get_abs_path(schema_file)) as f:
+        with open(get_abs_path(schema_file), encoding='UTF-8') as f:
             schema = json.load(f)
         return self._add_custom_fields(schema)
 
@@ -652,7 +674,7 @@ class CallLegs(Stream):
         bookmark = self.get_bookmark(state)
         bookmark = math.floor(bookmark.timestamp())
         next_page = f'https://{self.client.talk.subdomain}.zendesk.com/api/v2/channels/voice/stats/incremental/legs?start_time={bookmark}'
-        count = 50 
+        count = 50
 
         # this endpoint will always return a value for next_page, so instead we
         # use the count property to determine if more items are available
