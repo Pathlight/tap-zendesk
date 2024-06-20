@@ -10,6 +10,7 @@ from singer import metadata
 from singer import utils
 from singer.metrics import Point
 from tap_zendesk import metrics as zendesk_metrics
+from tap_zendesk import http
 
 DEFAULT_PAGE_SIZE = 100
 REQUEST_TIMEOUT = 300
@@ -164,6 +165,19 @@ class Stream():
 
     def is_selected(self):
         return self.stream is not None
+
+class CursorBasedStream(Stream):
+    item_key = None
+    endpoint = None
+
+    def get_objects(self, **kwargs):
+        '''
+        Cursor based object retrieval
+        '''
+        url = self.endpoint.format(self.config['subdomain'])
+        # Pass `request_timeout` parameter
+        for page in http.get_cursor_based(url, self.config['access_token'], self.request_timeout, self.page_size, **kwargs):
+            yield from page[self.item_key]
 
 def raise_or_log_zenpy_apiexception(schema, stream, e):
     # There are multiple tiers of Zendesk accounts. Some of them have
@@ -354,15 +368,34 @@ class TicketAuditEvents(Stream):
             yield (self.stream, event)
 
 
-class TicketMetrics(Stream):
+class TicketMetrics(CursorBasedStream):
     name = "ticket_metrics"
     replication_method = "INCREMENTAL"
     count = 0
+    endpoint = 'https://{}.zendesk.com/api/v2/tickets/{}/metrics'
+    item_key = 'ticket_metric'
 
-    def sync(self, ticket_dict):
-        ticket_metric = ticket_dict['metric_set']
-        self.count += 1
-        yield (self.stream, ticket_metric)
+    def sync(self, ticket_id):
+        # Only 1 ticket metric per ticket
+        url = self.endpoint.format(self.config['subdomain'], ticket_id)
+        # Pass `request_timeout`
+        pages = http.get_offset_based(url, self.config['access_token'], self.request_timeout, self.page_size)
+        for page in pages:
+            zendesk_metrics.capture('ticket_metric')
+            self.count += 1
+            yield (self.stream, page[self.item_key])
+
+    def check_access(self):
+        '''
+        Check whether the permission was given to access stream resources or not.
+        '''
+        url = self.endpoint.format(self.config['subdomain'], '1')
+        HEADERS['Authorization'] = 'Bearer {}'.format(self.config["access_token"])
+        try:
+            http.call_api(url, self.request_timeout, params={'per_page': 1}, headers=HEADERS)
+        except http.ZendeskNotFoundError:
+            #Skip 404 ZendeskNotFoundError error as goal is just to check whether TicketComments have read permission or not
+            pass
 
 class TicketEvents(Stream):
     name = "ticket_events"
