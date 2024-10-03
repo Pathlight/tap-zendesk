@@ -468,13 +468,22 @@ class TicketMetricEvents(Stream):
             self.update_bookmark(state, event.time)
             yield (self.stream, event)
 
-class SatisfactionRatings(Stream):
+class SatisfactionRatings(CursorBasedStream):
     name = "satisfaction_ratings"
     replication_method = "INCREMENTAL"
     replication_key = "updated_at"
+    endpoint = 'https://{}.zendesk.com/api/v2/satisfaction_ratings'
+    item_key = 'satisfaction_ratings'
 
     def sync(self, state):
         bookmark = self.get_bookmark(state)
+        epoch_bookmark = int(bookmark.timestamp())
+        params = {'start_time': epoch_bookmark}
+        ratings = self.get_objects(params=params)
+        for rating in ratings:
+            if utils.strptime_with_tz(rating['updated_at']) >= bookmark:
+                self.update_bookmark(state, rating['updated_at'])
+                yield (self.stream, rating)
         original_search_window_size = DEFAULT_SEARCH_WINDOW_SIZE
         search_window_size = original_search_window_size
         # We substract a second here because the API seems to compare
@@ -552,21 +561,23 @@ class AgentsActivity(Stream):
             yield (self.stream, agent_activity)
 
 
-class Groups(Stream):
+class Groups(CursorBasedStream):
     name = "groups"
     replication_method = "INCREMENTAL"
     replication_key = "updated_at"
+    endpoint = 'https://{}.zendesk.com/api/v2/groups'
+    item_key = 'groups'
 
     def sync(self, state):
         bookmark = self.get_bookmark(state)
 
-        groups = self.client.groups()
+        groups = self.get_objects()
         for group in groups:
-            if utils.strptime_with_tz(group.updated_at) >= bookmark:
+            if utils.strptime_with_tz(group['updated_at']) >= bookmark:
                 # NB: We don't trust that the records come back ordered by
                 # updated_at (we've observed out-of-order records),
                 # so we can't save state until we've seen all records
-                self.update_bookmark(state, group.updated_at)
+                self.update_bookmark(state, group['updated_at'])
                 yield (self.stream, group)
 
 class Macros(Stream):
@@ -586,33 +597,36 @@ class Macros(Stream):
                 self.update_bookmark(state, macro.updated_at)
                 yield (self.stream, macro)
 
-class Tags(Stream):
+class Tags(CursorBasedStream):
     name = "tags"
     replication_method = "FULL_TABLE"
     key_properties = ["name"]
+    endpoint = 'https://{}.zendesk.com/api/v2/tags'
+    item_key = 'tags'
 
     def sync(self, state): # pylint: disable=unused-argument
-        # NB: Setting page to force it to paginate all tags, instead of just the
-        #     top 100 popular tags
-        tags = self.client.tags(page=1)
+        tags = self.get_objects()
+
         for tag in tags:
             yield (self.stream, tag)
 
-class TicketFields(Stream):
+class TicketFields(CursorBasedStream):
     name = "ticket_fields"
     replication_method = "INCREMENTAL"
     replication_key = "updated_at"
+    endpoint = 'https://{}.zendesk.com/api/v2/ticket_fields'
+    item_key = 'ticket_fields'
 
     def sync(self, state):
         bookmark = self.get_bookmark(state)
 
-        fields = self.client.ticket_fields()
+        fields = self.get_objects()
         for field in fields:
-            if utils.strptime_with_tz(field.updated_at) >= bookmark:
+            if utils.strptime_with_tz(field['updated_at']) >= bookmark:
                 # NB: We don't trust that the records come back ordered by
                 # updated_at (we've observed out-of-order records),
                 # so we can't save state until we've seen all records
-                self.update_bookmark(state, field.updated_at)
+                self.update_bookmark(state, field['updated_at'])
                 yield (self.stream, field)
 
 class TicketForms(Stream):
@@ -632,27 +646,30 @@ class TicketForms(Stream):
                 self.update_bookmark(state, form.updated_at)
                 yield (self.stream, form)
 
-class GroupMemberships(Stream):
+class GroupMemberships(CursorBasedStream):
     name = "group_memberships"
     replication_method = "INCREMENTAL"
     replication_key = "updated_at"
+    endpoint = 'https://{}.zendesk.com/api/v2/group_memberships'
+    item_key = 'group_memberships'
+
 
     def sync(self, state):
         bookmark = self.get_bookmark(state)
+        memberships = self.get_objects()
 
-        memberships = self.client.group_memberships()
         for membership in memberships:
             # some group memberships come back without an updated_at
-            if membership.updated_at:
-                if utils.strptime_with_tz(membership.updated_at) >= bookmark:
+            if membership['updated_at']:
+                if utils.strptime_with_tz(membership['updated_at']) >= bookmark:
                     # NB: We don't trust that the records come back ordered by
                     # updated_at (we've observed out-of-order records),
                     # so we can't save state until we've seen all records
-                    self.update_bookmark(state, membership.updated_at)
+                    self.update_bookmark(state, membership['updated_at'])
                     yield (self.stream, membership)
             else:
-                if membership.id:
-                    LOGGER.info('group_membership record with id: ' + str(membership.id) +
+                if membership['id']:
+                    LOGGER.info('group_membership record with id: ' + str(membership['id']) +
                                 ' does not have an updated_at field so it will be syncd...')
                     yield (self.stream, membership)
                 else:
